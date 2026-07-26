@@ -2,17 +2,33 @@ import os
 import re
 import datetime
 import json
+import threading
+from flask import Flask
 import telebot
 import gspread
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8663061397:AAFHdqhcaK2uVfht809n1ESuYTIbrk7FvBc") 
+# --- ВЕБ-СЕРВЕР ДЛЯ RENDER ---
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is alive!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+
+# --- НАСТРОЙКА БОТА И GOOGLE ---
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8663061397:AAFHdqhcaK2uVfht809n1ESuYTIbrk7FvBc")
 SPREADSHEET_ID = "1-_QYOaap7Hr8aDfuPUgRJYbImzTDCcc2BDR4ZjiRD24"
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-creds_json = os.environ.get("GOOGLE_CREDENTIALS")
-if creds_json:
-    creds_dict = json.loads(creds_json)
+# Подключение ключей Google
+if os.path.exists('/etc/secrets/credentials.json'):
+    gc = gspread.service_account(filename='/etc/secrets/credentials.json')
+elif os.environ.get("GOOGLE_CREDENTIALS"):
+    creds_dict = json.loads(os.environ.get("GOOGLE_CREDENTIALS"))
     gc = gspread.service_account_from_dict(creds_dict)
 else:
     gc = gspread.service_account(filename="credentials.json")
@@ -80,12 +96,11 @@ def get_stats(message):
 @bot.message_handler(func=lambda message: True)
 def handle_expense(message):
     text = message.text.strip()
-    # Регулярка теперь ищет знак плюс перед суммой (+500 или 500)
     match = re.match(r"^([a-zA-яА-яЕёІіЇїЄє\s]+)\s+(\+)?(\d+(?:[\.,]\d+)?)$", text)
     
     if match:
         category = match.group(1).strip()
-        is_income = bool(match.group(2))  # Если был плюс — это доход
+        is_income = bool(match.group(2))
         amount = float(match.group(3).replace(',', '.'))
         user_name = message.from_user.first_name or "Пользователь"
         date_today = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -95,7 +110,6 @@ def handle_expense(message):
         try:
             sh = gc.open_by_key(SPREADSHEET_ID)
             worksheet = sh.sheet1
-            # Записываем: Дата, Имя, Категория, Сумма, Тип
             worksheet.append_row([date_today, user_name, category, amount, entry_type])
             
             icon = "💵 Доход" if is_income else "💸 Расход"
@@ -110,4 +124,7 @@ def handle_expense(message):
             bot.reply_to(message, f"Ошибка сохранения в таблицу: {e}")
 
 if __name__ == '__main__':
+    # Запускаем Flask в отдельном потоке
+    threading.Thread(target=run_flask, daemon=True).start()
+    # Запускаем бота
     bot.polling(none_stop=True)
