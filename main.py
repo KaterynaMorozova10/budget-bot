@@ -11,7 +11,15 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "8663061397:AAFHdqhcaK2uVfht809n1ESuYTIb
 SPREADSHEET_ID = "1-_QYOaap7Hr8aDfuPUgRJYbImzTDCcc2BDR4ZjiRD24"
 
 bot = telebot.TeleBot(BOT_TOKEN)
-gc = gspread.service_account(filename="credentials.json")
+import json
+
+creds_json = os.environ.get("GOOGLE_CREDENTIALS")
+if creds_json:
+    creds_dict = json.loads(creds_json)
+    gc = gspread.service_account_from_dict(creds_dict)
+else:
+    gc = gspread.service_account(filename="credentials.json")
+
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
