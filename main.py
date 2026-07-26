@@ -22,6 +22,9 @@ def run_flask():
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8663061397:AAFHdqhcaK2uVfht809n1ESuYTIbrk7FvBc")
 SPREADSHEET_ID = "1-_QYOaap7Hr8aDfuPUgRJYbImzTDCcc2BDR4ZjiRD24"
 
+# Список разрешенных Telegram ID (только вы вдвоем)
+ALLOWED_USERS = [549359241, 340848070]
+
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # Подключение ключей Google
@@ -34,8 +37,19 @@ else:
     gc = gspread.service_account(filename="credentials.json")
 
 
+# Функция проверки доступа
+def is_allowed(message):
+    if message.from_user.id not in ALLOWED_USERS:
+        bot.reply_to(message, "⛔ У вас нет доступа к этому боту.")
+        return False
+    return True
+
+
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
+    if not is_allowed(message):
+        return
+        
     bot.reply_to(
         message, 
         "Привет! Я бот учета доходов и трат.\n\n"
@@ -43,11 +57,15 @@ def send_welcome(message):
         "`продукты 500` или `такси 120`\n\n"
         "Запись доходов (со знаком +):\n"
         "`зарплата +5000` или `аванс +1000`\n\n"
-        "Команда /stats — отчет и баланс за текущий месяц"
+        "Команда /stats — отчет и баланс за текущий месяц",
+        parse_mode="Markdown"
     )
 
 @bot.message_handler(commands=['stats'])
 def get_stats(message):
+    if not is_allowed(message):
+        return
+        
     try:
         sh = gc.open_by_key(SPREADSHEET_ID)
         worksheet = sh.sheet1
@@ -95,6 +113,9 @@ def get_stats(message):
 
 @bot.message_handler(func=lambda message: True)
 def handle_expense(message):
+    if not is_allowed(message):
+        return
+        
     text = message.text.strip()
     match = re.match(r"^([a-zA-яА-яЕёІіЇїЄє\s]+)\s+(\+)?(\d+(?:[\.,]\d+)?)$", text)
     
