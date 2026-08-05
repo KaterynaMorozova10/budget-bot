@@ -22,7 +22,6 @@ def run_flask():
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8663061397:AAFHdqhcaK2uVfht809n1ESuYTIbrk7FvBc")
 SPREADSHEET_ID = "1-_QYOaap7Hr8aDfuPUgRJYbImzTDCcc2BDR4ZjiRD24"
 
-# Список разрешенных Telegram ID (только вы вдвоем)
 ALLOWED_USERS = [549359241, 340848070]
 
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -37,7 +36,6 @@ else:
     gc = gspread.service_account(filename="credentials.json")
 
 
-# Функция проверки доступа
 def is_allowed(message):
     if message.from_user.id not in ALLOWED_USERS:
         bot.reply_to(message, "⛔ У вас нет доступа к этому боту.")
@@ -60,7 +58,7 @@ def send_welcome(message):
         "**Команды статистики /stats:**\n"
         "• `/stats` — отчет за текущий месяц\n"
         "• `/stats 07.2026` — отчет за конкретный месяц (ММ.ГГГГ)\n"
-        "• `/stats 01.08.2026 05.08.2026` — отчет за период (ДД.ММ.ГГГГ ДД.ММ.ГГГГ)",
+        "• `/stats 01.08.2026 05.08.2026` — отчет за период",
         parse_mode="Markdown"
     )
 
@@ -73,17 +71,15 @@ def get_stats(message):
         args = message.text.strip().split()[1:]
         now = datetime.datetime.now()
         
-        # 1. За конкретный период: /stats 01.08.2026 05.08.2026
         if len(args) == 2:
             try:
                 start_date = datetime.datetime.strptime(args[0], "%d.%m.%Y").date()
                 end_date = datetime.datetime.strptime(args[1], "%d.%m.%Y").date()
-                period_title = f"за период с {args[0]} по {args[1]}"
+                period_title = f"с {args[0]} по {args[1]}"
             except ValueError:
-                bot.reply_to(message, "❌ Неверный формат дат. Используйте: `/stats 01.08.2026 05.08.2026`", parse_mode="Markdown")
+                bot.reply_to(message, "❌ Формат дат: `/stats 01.08.2026 05.08.2026`", parse_mode="Markdown")
                 return
 
-        # 2. За выбранный месяц: /stats 07.2026
         elif len(args) == 1:
             try:
                 dt = datetime.datetime.strptime(args[0], "%m.%Y")
@@ -94,10 +90,9 @@ def get_stats(message):
                     end_date = datetime.date(dt.year, dt.month + 1, 1) - datetime.timedelta(days=1)
                 period_title = f"за {args[0]}"
             except ValueError:
-                bot.reply_to(message, "❌ Неверный формат месяца. Используйте: `/stats 08.2026`", parse_mode="Markdown")
+                bot.reply_to(message, "❌ Формат месяца: `/stats 08.2026`", parse_mode="Markdown")
                 return
 
-        # 3. По умолчанию: за текущий месяц
         else:
             start_date = now.date().replace(day=1)
             if now.month == 12:
@@ -106,56 +101,82 @@ def get_stats(message):
                 end_date = datetime.date(now.year, now.month + 1, 1) - datetime.timedelta(days=1)
             period_title = f"за текущий месяц ({now.strftime('%m.%Y')})"
 
-        # Чтение таблицы Google Sheets
         sh = gc.open_by_key(SPREADSHEET_ID)
         worksheet = sh.sheet1
-        data = worksheet.get_all_records()
+        rows = worksheet.get_all_values()
         
-        total_income = 0
-        total_expense = 0
+        if not rows or len(rows) < 2:
+            bot.reply_to(message, "ℹ️ Таблица пуста.")
+            return
+
+        headers = [h.strip().lower() for h in rows[0]]
+        
+        def get_idx(name):
+            for i, h in enumerate(headers):
+                if name in h:
+                    return i
+            return -1
+
+        date_idx = get_idx('дата')
+        name_idx = get_idx('имя')
+        cat_idx = get_idx('категор')
+        sum_idx = get_idx('сумм')
+        type_idx = get_idx('тип')
+
+        total_income = 0.0
+        total_expense = 0.0
         user_totals = {}
         category_totals = {}
         
-        for row in data:
-            date_raw = str(row.get('Дата', '')).strip()
+        for row in rows[1:]:
+            if not row or len(row) <= max(date_idx, sum_idx):
+                continue
+                
+            date_raw = row[date_idx].strip() if date_idx != -1 else ''
             if not date_raw:
                 continue
                 
-            # Извлекаем точную дату YYYY-MM-DD
             try:
                 row_date = datetime.datetime.strptime(date_raw.split()[0], "%Y-%m-%d").date()
             except ValueError:
                 continue
 
-            # Фильтрация по выбранному диапазону
             if start_date <= row_date <= end_date:
-                amount = float(str(row.get('Сумма', 0)).replace(',', '.'))
-                user = row.get('Имя', 'Неизвестный')
-                category = row.get('Категория', 'Другое').capitalize()
-                entry_type = str(row.get('Тип', 'Расход'))
+                raw_sum = row[sum_idx].strip().replace('\xa0', '').replace(' ', '').replace(',', '.') if sum_idx != -1 else '0'
+                try:
+                    amount = float(raw_sum)
+                except ValueError:
+                    amount = 0.0
+
+                user = row[name_idx].strip() if name_idx != -1 and len(row) > name_idx else 'Неизвестный'
+                category = row[cat_idx].strip().capitalize() if cat_idx != -1 and len(row) > cat_idx else 'Другое'
+                if not category:
+                    category = 'Другое'
+                
+                entry_type = row[type_idx].strip() if type_idx != -1 and len(row) > type_idx else 'Расход'
                 
                 if entry_type == 'Доход':
                     total_income += amount
                 else:
                     total_expense += amount
-                    user_totals[user] = user_totals.get(user, 0) + amount
-                    category_totals[category] = category_totals.get(category, 0) + amount
+                    user_totals[user] = user_totals.get(user, 0.0) + amount
+                    category_totals[category] = category_totals.get(category, 0.0) + amount
                 
         report = f"📊 **Отчет {period_title}:**\n\n"
-        report += f"💵 **Доходы:** +{total_income:,.0f} грн\n"
-        report += f"💸 **Расходы:** -{total_expense:,.0f} грн\n"
-        report += f"⚖️ **Баланс:** {total_income - total_expense:,.0f} грн\n\n"
+        report += f"💵 **Доходы:** +{total_income:,.2f} грн\n"
+        report += f"💸 **Расходы:** -{total_expense:,.2f} грн\n"
+        report += f"⚖️ **Баланс:** {total_income - total_expense:,.2f} грн\n\n"
         
         if category_totals:
             report += "**Расходы по категориям:**\n"
             for cat, amt in category_totals.items():
-                report += f"• {cat}: {amt:,.0f} грн\n"
+                report += f"• {cat}: {amt:,.2f} грн\n"
             report += "\n"
             
         if user_totals:
             report += "**Расходы по людям:**\n"
             for usr, amt in user_totals.items():
-                report += f"👤 {usr}: {amt:,.0f} грн\n"
+                report += f"👤 {usr}: {amt:,.2f} грн\n"
                 
         if not category_totals and total_income == 0:
             report += "ℹ️ За выбранный период записей не найдено."
@@ -192,13 +213,11 @@ def handle_expense(message):
                 f"Записано! ✅\n"
                 f"Тип: {icon}\n"
                 f"👤 {user_name}\n"
-                f"📂 {category.capitalize()}: {amount:,.0f} грн"
+                f"📂 {category.capitalize()}: {amount:,.2f} грн"
             )
         except Exception as e:
             bot.reply_to(message, f"Ошибка сохранения в таблицу: {e}")
 
 if __name__ == '__main__':
-    # Запуск Flask в фоновом потоке
     threading.Thread(target=run_flask, daemon=True).start()
-    # Запуск бота
     bot.polling(none_stop=True)
